@@ -1,3 +1,9 @@
+/**
+ * socket服务端代码
+ * 一对一连接
+ */
+
+
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <netinet/in.h>

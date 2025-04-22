@@ -1,8 +1,3 @@
-/**
- * socket客户端代码
- * 一对一的连接服务端
- */
-
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <netinet/in.h>
@@ -13,10 +8,6 @@
 #include <unistd.h>
 #include <pthread.h>
 
-// 192.168.190.131 IP 地址的16进制表示
-#define INADDR_LOCAL 0xC0A8BE83
-
-//错误异常处理
 #define handle_error(cmd, result) \
     if (result < 0)               \
     {                             \
@@ -24,7 +15,6 @@
         return -1;                \
     }
 
-//读取信息通过服务端
 void *read_from_server(void *argv)
 {
     int sockfd = *(int *)argv;
@@ -57,22 +47,21 @@ void *write_to_server(void *argv)
 {
     int sockfd = *(int *)argv;
     char *write_buf = NULL;
-    ssize_t send_count = 0;
+    ssize_t send_count;
 
     write_buf = malloc(sizeof(char) * 1024);
 
     if (!write_buf)
     {
-        printf("写缓存分配失败，断开连接\n");
+        printf("写缓存申请异常，断开连接\n");
         shutdown(sockfd, SHUT_WR);
         perror("malloc client write_buf");
-
         return NULL;
     }
 
     while (fgets(write_buf, 1024, stdin) != NULL)
     {
-        send_count = send(sockfd, write_buf, 1024, 0);
+        send(sockfd, write_buf, 1024, 0);
         if (send_count < 0)
         {
             perror("send");
@@ -91,29 +80,19 @@ int main(int argc, char const *argv[])
     int sockfd, temp_result;
     pthread_t pid_read, pid_write;
 
-    struct sockaddr_in server_addr, client_addr;
+    struct sockaddr_in server_addr;
 
     memset(&server_addr, 0, sizeof(server_addr));
-    memset(&client_addr, 0, sizeof(client_addr));
 
     server_addr.sin_family = AF_INET;
     // 连接本机 127.0.0.1
     server_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    // 连接端口 40000
-    server_addr.sin_port = htons(40000);
-
-    client_addr.sin_family = AF_INET;
-    // 连接本机 192.168.190.131
-    client_addr.sin_addr.s_addr = htonl(INADDR_LOCAL);
-    // 连接端口 41000
-    client_addr.sin_port = htons(41000);
+    // 连接端口 6666
+    server_addr.sin_port = htons(6666);
 
     // 创建socket
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
     handle_error("socket", sockfd);
-
-    temp_result = bind(sockfd, (struct sockaddr *)&client_addr, sizeof(client_addr));
-    handle_error("bind", temp_result);
 
     // 连接server
     temp_result = connect(sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr));
@@ -124,7 +103,7 @@ int main(int argc, char const *argv[])
     // 启动一个子线程，用来从命令行读取数据并发送到服务端
     pthread_create(&pid_write, NULL, write_to_server, (void *)&sockfd);
 
-    // 阻塞主线程
+    // 主线程等待子线程退出
     pthread_join(pid_read, NULL);
     pthread_join(pid_write, NULL);
 

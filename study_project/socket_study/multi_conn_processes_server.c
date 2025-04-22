@@ -1,9 +1,6 @@
-/**
- * 一个服务端连接多个客户端
- */
-
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,6 +8,7 @@
 #include <arpa/inet.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <signal.h>
 
 #define handle_error(cmd, result) \
     if (result < 0)               \
@@ -18,6 +16,23 @@
         perror(cmd);              \
         return -1;                \
     }
+
+//这个函数就是注册一个信号量让其循环回收子进程，避免产生僵尸进程
+void zombie_dealer(int sig) {
+    pid_t pid;
+    int status;
+    // 一个SIGCHLD可能对应多个子进程的退出
+    // 使用while循环回收所有退出的子进程，避免僵尸进程的出现
+    while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
+        if (WIFEXITED(status)) {
+            printf("子进程: %d 以 %d 状态正常退出，已被回收\n", pid, WEXITSTATUS(status));
+        } else if (WIFSIGNALED(status)) {
+            printf("子进程: %d 被 %d 信号杀死，已被回收\n", pid, WTERMSIG(status));
+        } else {
+            printf("子进程: %d 因其它原因退出，已被回收\n", pid);
+        }
+    }
+}
 
 void *read_from_client_then_write(void *argv)
 {
@@ -31,7 +46,7 @@ void *read_from_client_then_write(void *argv)
     // 判断内存是否分配成功
     if (!read_buf)
     {
-        printf("服务端读缓存创建异常，断开连接\n");
+        printf("服务端pid: %d: 读缓存创建异常，断开连接\n", getpid());
         shutdown(client_fd, SHUT_WR);
         close(client_fd);
         perror("malloc sever read_buf");
@@ -42,7 +57,7 @@ void *read_from_client_then_write(void *argv)
     write_buf = malloc(sizeof(char) * 1024);
     if (!write_buf)
     {
-        printf("服务端写缓存创建异常，断开连接\n");
+        printf("服务端pid: %d: 写缓存创建异常，断开连接\n", getpid());
         free(read_buf);
         shutdown(client_fd, SHUT_WR);
         close(client_fd);
@@ -56,9 +71,9 @@ void *read_from_client_then_write(void *argv)
         {
             perror("recv");
         }
-        printf("reveive message from client_fd: %d: %s\n", client_fd, read_buf);
+        printf("服务端pid: %d: reveive message from client_fd: %d: %s\n", getpid(), client_fd, read_buf);
 
-        strcpy(write_buf, "reveived~\n");
+        sprintf(write_buf, "服务端pid: %d: reveived~\n", getpid());
         send_count = send(client_fd, write_buf, 1024, 0);
         if (send_count < 0)
         {
@@ -66,8 +81,8 @@ void *read_from_client_then_write(void *argv)
         }
     }
 
-    printf("客户端client_fd: %d请求关闭连接......\n", client_fd);
-    strcpy(write_buf, "receive your shutdown signal\n");
+    printf("服务端pid: %d: 客户端client_fd: %d请求关闭连接......\n", getpid(), client_fd);
+    sprintf(write_buf, "服务端pid: %d: receive your shutdown signal\n", getpid());
 
     send_count = send(client_fd, write_buf, 1024, 0);
     if (send_count < 0)
@@ -75,7 +90,7 @@ void *read_from_client_then_write(void *argv)
         perror("send");
     }
 
-    printf("释放client_fd: %d资源\n", client_fd);
+    printf("服务端pid: %d: 释放client_fd: %d资源\n", getpid(), client_fd);
     shutdown(client_fd, SHUT_WR);
     close(client_fd);
     free(read_buf);
@@ -99,7 +114,7 @@ int main(int argc, char const *argv[])
     server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
     // 端口随便用一个，但是不要用特权端口
     server_addr.sin_port = htons(6666);
- 
+
     // 创建server socket
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
     handle_error("socket", sockfd);
@@ -114,27 +129,38 @@ int main(int argc, char const *argv[])
 
     socklen_t cliaddr_len = sizeof(client_addr);
 
+    // 注册信号处理函数，处理SIGCHLD信号，避免僵尸进程出现
+    signal(SIGCHLD, zombie_dealer);
+
     // 接受client连接
     while (1)
     {
         int client_fd = accept(sockfd, (struct sockaddr *)&client_addr, &cliaddr_len);
         handle_error("accept", client_fd);
 
-        printf("与客户端 from %s at PORT %d 文件描述符 %d 建立连接\n",
-               inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port), client_fd);
+        pid_t pid = fork();
 
-        pthread_t pid_read_write;
-
-        // 启动一个子线程，用来读取客户端数据，并打印到 stdout
-        // 要注意，此处的pid_read_write并不是线程ID，而是用于线程处理函数的标识符
-        if (pthread_create(&pid_read_write, NULL, read_from_client_then_write, (void *)&client_fd))
+        if (pid > 0)
         {
-            perror("pthread_create");
-        }
+            printf("this is father, pid is %d, continue accepting...\n", getpid());
 
-        // 将子线程处理为detached状态，使其终止时自动回收资源，同时不阻塞主线程
-        pthread_detach(pid_read_write);
-        printf("创建子线程并处理为detached状态\n");
+            // 父进程不需要处理client_fd，释放文件描述符，使其引用计数减一，以便子进程释放client_fd后，其引用计数可以减为0,从而释放资源
+            close(client_fd);
+        }
+        else if (pid == 0)
+        {
+            // 子进程不需要处理sockfd，释放文件描述符，使其引用计数减一
+            close(sockfd);
+            printf("与客户端 from %s at PORT %d 文件描述符 %d 建立连接\n",
+                   inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port), client_fd);
+            printf("新的服务端pid为: %d\n", getpid());
+            // 读取客户端数据，并打印到 stdout
+            read_from_client_then_write((void *)&client_fd);
+
+            // 释放资源并终止子进程
+            close(client_fd);
+            exit(EXIT_SUCCESS);
+        }
     }
 
     printf("释放资源\n");
