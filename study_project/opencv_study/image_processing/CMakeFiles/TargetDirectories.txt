@@ -1,0 +1,3 @@
+/home/alnes/Code-base/study_project/opencv_study/image_processing/CMakeFiles/OpenCVExample.dir
+/home/alnes/Code-base/study_project/opencv_study/image_processing/CMakeFiles/edit_cache.dir
+/home/alnes/Code-base/study_project/opencv_study/image_processing/CMakeFiles/rebuild_cache.dir

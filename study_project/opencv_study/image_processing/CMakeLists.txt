@@ -3,6 +3,6 @@ project(OpenCVExample)
 
 find_package(OpenCV REQUIRED)
 
-add_executable(OpenCVExample geometric_transformations_of_images.cpp)
+add_executable(OpenCVExample contour_detection.cpp)
 
 target_link_libraries(OpenCVExample ${OpenCV_LIBS})
